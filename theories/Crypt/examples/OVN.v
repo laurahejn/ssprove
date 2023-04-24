@@ -47,7 +47,7 @@ End GroupParam.
 
 Module Type OVNParam.
 
-  Parameter N : nat.
+  Parameter N : nat. (* the number if participants in the protocol *)
   Parameter N_pos : Positive N.
 
 End OVNParam.
@@ -58,15 +58,18 @@ Import OP.
 
 Set Equations Transparent.
 
+(* ζ is a cyclic group *)
 Lemma cyclic_zeta: cyclic ζ.
 Proof.
   apply /cyclicP. exists g. exact: g_gen.
 Qed.
 
 (* order of g *)
-Definition q' := Zp_trunc (pdiv #[g]).
+Search Zp_trunc.
+Definition q' := Zp_trunc (pdiv #[g]). (* finds prime divisor in order of g and subtracts 2 *)
 Definition q : nat := q'.+2.
 
+(* q is defined to be the order of g *)
 Lemma q_order_g : q = #[g].
 Proof.
   unfold q, q'.
@@ -82,6 +85,7 @@ Proof.
   reflexivity.
 Qed.
 
+(* the finite group (the base for ζ) is commutative under multiplication *)
 Lemma group_prodC :
   @commutative gT gT mulg.
 Proof.
@@ -98,11 +102,12 @@ Proof.
   repeat rewrite -expgD addnC. reflexivity.
 Qed.
 
-Definition Pid : finType := [finType of 'I_n].
-Definition Secret : finType := Zp_finComRingType (Zp_trunc #[g]).
-Definition Public : finType := FinGroup.arg_finType gT.
+Definition Pid : finType := [finType of 'I_n]. (* set of participants id *)
+Definition Secret : finType := Zp_finComRingType (Zp_trunc #[g]). (* set of possible secrets *)
+Definition Public : finType := FinGroup.arg_finType gT. (* set of possible public information *)
 Definition s0 : Secret := 0.
 
+(* make sure the sets above are non-empty *)
 Definition Pid_pos : Positive #|Pid|.
 Proof.
   rewrite card_ord.
@@ -128,6 +133,7 @@ Definition pid : choice_type := 'fin #|Pid|.
 Definition secret : choice_type := 'fin #|Secret|.
 Definition public: choice_type := 'fin #|Public|.
 
+(* convert a natural number to a participant id *)
 Definition nat_to_pid : nat → pid.
 Proof.
   move=> n.
@@ -142,7 +148,7 @@ Module Type CDSParams <: SigmaProtocolParams.
   Definition Statement : finType := prod_finType (prod_finType Public Public) Public.
 
   Definition Witness_pos : Positive #|Witness| := Secret_pos.
-  Definition Statement_pos : Positive #|Statement|.
+  Definition Statement_pos : Positive #|Statement|. (* the relation is non-empty *)
   Proof.
     unfold Statement.
     rewrite !card_prod.
@@ -150,11 +156,13 @@ Module Type CDSParams <: SigmaProtocolParams.
     all: apply Public_pos.
   Qed.
 
+  (* definition of the relation in round 1 of OVN protocol, i.e. the ballot is valid *)
   Definition R : Statement -> Witness -> bool :=
     λ (h : Statement) (x : Witness),
       let '(gx, gy, gyxv) := h in
       (gy^+x * g^+0 == gyxv) || (gy^+x * g^+1 == gyxv).
 
+  (* a vote v=0 lies in the relation given we use correct secret and public information *)
   Lemma relation_valid_left:
     ∀ (x : Secret) (gy : Public),
       R (g^+x, gy, gy^+x * g^+ 0) x.
@@ -165,6 +173,7 @@ Module Type CDSParams <: SigmaProtocolParams.
     done.
   Qed.
 
+  (* a vote v=1 lies in the relation given we use correct secret and public information *)
   Lemma relation_valid_right:
     ∀ (x : Secret) (gy : Public),
       R (g^+x, gy, gy^+x * g^+ 1) x.
@@ -175,6 +184,7 @@ Module Type CDSParams <: SigmaProtocolParams.
     done.
   Qed.
 
+  (* the parameters for the ZKP in round 1 of OVN *)
   Parameter Message Challenge Response State : finType.
   Parameter w0 : Witness.
   Parameter e0 : Challenge.
@@ -195,10 +205,10 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
   Obligation Tactic := idtac.
   Set Equations Transparent.
 
-  Definition skey_loc (i : nat) : Location := (secret; (100+i)%N).
-  Definition ckey_loc (i : nat) : Location := (public; (101+i)%N).
+  Definition skey_loc (i : nat) : Location := (secret; (100+i)%N). (* location for the secret keys*)
+  Definition ckey_loc (i : nat) : Location := (public; (101+i)%N). (* location for the reconstruction key *)
 
-  Definition P_i_locs (i : nat) : {fset Location} := fset [:: skey_loc i ; ckey_loc i].
+  Definition P_i_locs (i : nat) : {fset Location} := fset [:: skey_loc i ; ckey_loc i]. (* location for participant i keys *)
 
   Notation choiceStatement1 := Sigma1.MyAlg.choiceStatement.
   Notation choiceWitness1 := Sigma1.MyAlg.choiceWitness.
@@ -225,6 +235,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
   Definition P (i : nat) : nat := 14 + i.
   Definition Exec (i : nat) : nat := 15 + i.
 
+  (* if l is not an element in L0 nor in L1 then it is not in the union *)
   Lemma not_in_fsetU :
     ∀ (l : Location) L0 L1,
       l \notin L0  →
@@ -263,14 +274,16 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
 
   Canonical finGroup_com_law := Monoid.ComLaw group_prodC.
 
+  (* function to compute the reconstruction key for participant i *)
   Definition compute_key
              (m : chMap pid (chProd public choiceTranscript1))
              (i : pid)
     :=
-    let low := \prod_(k <- domm m | (k < i)%ord) (get_value m k) in
+    let low := \prod_(k <- domm m | (k < i)%ord) (get_value m k) in 
     let high := \prod_(k <- domm m | (i < k)%ord) (get_value m k) in
     low * invg high.
 
+  (* computing the reconstruction key when the secret of j is not in m *)
   Definition compute_key'
              (m : chMap pid (chProd public choiceTranscript1))
              (i j : pid)
@@ -285,6 +298,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       let high := \prod_(k <- domm m | (i < k)%ord) (get_value m k) in
       low * invg (high * (g ^+ x)).
 
+  (* the two above definitions are equivalent *)
   Lemma compute_key'_equiv
         (i j : pid)
         (x : Secret)
@@ -292,6 +306,8 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
         (keys : chMap pid (chProd public choiceTranscript1)):
     (i != j) →
     compute_key (setm keys j (fto (g ^+ x), zk)) i = compute_key' (remm keys j) i j x.
+    (* LHS makes sure we use right secret in j
+    RHS makes sure we do not know j's secret before hand (i.e. we don't count it twice) *)
   Proof.
     intro ij_neq.
     unfold compute_key, compute_key'.
@@ -434,6 +450,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       ++ by rewrite eq.
   Qed.
 
+  (* The reconstruction key is a bijection of the secret x (j's secret) on the form ax+b *)
   Lemma compute_key_bij:
     ∀ (m : chMap pid (chProd public choiceTranscript1)) (i j: pid),
       (i != j)%ord →
@@ -706,6 +723,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
         done.
   Qed.
 
+  (* the reconstruction key is indeed a bijection *)
   Lemma test_bij
         (i j : pid)
         (m : chMap pid (chProd public choiceTranscript1))
@@ -869,6 +887,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       apply H'.
   Qed.
 
+  (* setup for participant i *)
   Definition P_i_E :=
     [interface
       #val #[ INIT ] : 'unit → 'public_key ;
@@ -876,12 +895,22 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       #val #[ VOTE ] : 'bool → 'public
     ].
 
+  (* setup for the sigma-protocol in round 1 of OVN *)
   Definition Sigma1_I :=
     [interface
       #val #[ Sigma1.Sigma.VERIFY ] : chTranscript1 → 'bool ;
       #val #[ Sigma1.Sigma.RUN ] : chRelation1 → chTranscript1
     ].
 
+  (* defintion of party i. The input is a participant identifier and a boolean determining
+  if the party is honest or not. The package consists of the three operations
+  - INIT(): this operation initialises the party by choosing a secret key, computing a public key,
+    and constructing a ZKP for the fact that the public key is valid. 
+  - CONSTRUCT (l : ledger): this operation takes the public keys as input and compute the 
+    reconstruction key for party i. 
+  - VOTE (v : bool): this computes the ballot given the vote v. Depending on whether the party
+    is honest or not the ballot is then computed accordingly, i.e. if the party is honest the 
+    ballot actually contains an encryption of the wanted vote. *)
   Definition P_i (i : pid) (b : bool):
     package (P_i_locs i)
       Sigma1_I
@@ -920,6 +949,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
         }
     ].
 
+  (* setup for the Scheduler *)
   Definition EXEC_i_I :=
     [interface
       #val #[ INIT ] : 'unit → 'public_key ;
@@ -930,6 +960,9 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
 
   Definition Exec_i_E i := [interface #val #[ Exec i ] : 'bool → 'public].
 
+  (* the code corresponding to the scheduler in the article. The scheduler assumes that
+  party i is corrupt, forces party j to act honest and ensures that all steps in the protocol
+  are perf *)
   Definition Exec_i (i j : pid) (m : chMap pid (chProd public choiceTranscript1)):
     package fset0
       EXEC_i_I
@@ -1038,7 +1071,8 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       apply fsubsetUr.
   Qed.
 
-
+  (* the following two lemmas ensure that the commitment and challenge from the first round 
+  of ZKP are in the expected locations *)
   Lemma loc_helper_commit i:
     Sigma1.MyAlg.commit_loc \in P_i_locs i :|: combined_locations.
   Proof.
@@ -1069,6 +1103,8 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     done.
   Qed.
 
+  (* the following two lemmas ensure that the locations of the secret key and the reconstruction
+  key are in the expected locations *)
   Lemma loc_helper_skey i:
     skey_loc i \in P_i_locs i :|: combined_locations.
   Proof.
@@ -1105,25 +1141,25 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     {code
      x ← sample uniform i_secret ;;
      #put skey_loc i := x ;;
-     #assert Sigma1.MyParam.R (otf (fto (expgn_rec (T:=gT) g (otf x)))) (otf x) ;;
-     x1 ← sample uniform Sigma1.MyAlg.i_witness ;;
+     #assert Sigma1.MyParam.R (otf (fto (expgn_rec (T:=gT) g (otf x)))) (otf x) ;; (*check that x is a witness*)
+     x1 ← sample uniform Sigma1.MyAlg.i_witness ;; (*get witness according to algorithm*)
      #put Sigma1.MyAlg.commit_loc := x1 ;;
-     x2 ← get RO1.queries_loc ;;
-     match x2 (Sigma1.Sigma.prod_assoc (fto (expgn_rec (T:=gT) g (otf x)), fto (expgn_rec (T:=gT) g (otf x1)))) with
-     | Some a =>
-         v ← get Sigma1.MyAlg.commit_loc ;;
+     x2 ← get RO1.queries_loc ;; (*get witness from oracle*)
+     match x2 (Sigma1.Sigma.prod_assoc (fto (expgn_rec (T:=gT) g (otf x)), fto (expgn_rec (T:=gT) g (otf x1)))) with (*get challenge based on statement and commitment*)
+     | Some a =>(*protocol followed*)
+         v ← get Sigma1.MyAlg.commit_loc ;; (*v=x1?*)
          x3 ← sample uniform i_secret ;;
-         #assert Sigma1.MyParam.R (otf (fto (expgn_rec (T:=gT) g (otf x3)))) (otf x3) ;;
-         x5 ← sample uniform Sigma1.MyAlg.i_witness ;;
+         #assert Sigma1.MyParam.R (otf (fto (expgn_rec (T:=gT) g (otf x3)))) (otf x3) ;; (*check that x3 witness*)
+         x5 ← sample uniform Sigma1.MyAlg.i_witness ;; (*get witness according to algorithm*)
          #put Sigma1.MyAlg.commit_loc := x5 ;;
-         v0 ← get RO1.queries_loc ;;
+         v0 ← get RO1.queries_loc ;; (*get witness from oracle*)
          match v0 (Sigma1.Sigma.prod_assoc (fto (expgn_rec (T:=gT) g (otf x3)), fto (expgn_rec (T:=gT) g (otf x5)))) with
-         | Some a0 =>
-             x6 ← get Sigma1.MyAlg.commit_loc ;;
+         | Some a0 =>(*as prot?*)
+             x6 ← get Sigma1.MyAlg.commit_loc ;; (*x6=v=x1?*)
              let x4 :=
              (fto (expgn_rec (T:=gT) g (otf x3)), fto (expgn_rec (T:=gT) g (otf x5)), a0, fto (Zp_add (otf x6) (Zp_mul (otf a0) (otf x3))))
              in
-         #assert eqn
+         #assert eqn (*indent?*)
                     (size
                        (domm (T:=[ordType of 'I_#|'I_n|]) (S:='I_#|gT| * ('I_#|gT| * 'I_#|gT| * 'I_#|'Z_Sigma1.q| * 'I_#|'Z_Sigma1.q|))
                           (setm (T:=[ordType of 'I_#|'I_n|]) (setm (T:=[ordType of 'I_#|'I_n|]) m j (fto (expgn_rec (T:=gT) g (otf x3)), x4)) i
@@ -1138,7 +1174,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
          v0 ← get skey_loc i ;;
          v1 ← get ckey_loc i ;;
          @ret 'public (fto (expgn_rec (T:=gT) (otf v1) v0 * expgn_rec (T:=gT) g vote))
-         | None =>
+         | None =>(*oracle?*)
              a0 ← sample uniform RO1.i_random ;;
              #put RO1.queries_loc := setm v0
                                       (Sigma1.Sigma.prod_assoc (fto (expgn_rec (T:=gT) g (otf x3)), fto (expgn_rec (T:=gT) g (otf x5)))) a0 ;;
@@ -1159,8 +1195,8 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
          v0 ← get skey_loc i ;;
          v1 ← get ckey_loc i ;;
          @ret 'public (fto (expgn_rec (T:=gT) (otf v1) v0 * expgn_rec (T:=gT) g vote))
-         end
-     | None =>
+         end (*end match v0*)
+     | None =>(*oracle partaking instead*)
          a ← sample uniform RO1.i_random ;;
          #put RO1.queries_loc := setm x2
                                   (Sigma1.Sigma.prod_assoc (fto (expgn_rec (T:=gT) g (otf x)), fto (expgn_rec (T:=gT) g (otf x1)))) a ;;
@@ -1210,8 +1246,8 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
          v0 ← get skey_loc i ;;
          v1 ← get ckey_loc i ;;
          @ret 'public (fto (expgn_rec (T:=gT) (otf v1) v0 * expgn_rec (T:=gT) g vote))
-               end
-     end
+               end(*end match v0*)
+     end(*end match x2 ...*)
     }.
   Next Obligation.
     intros.
@@ -1265,6 +1301,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     ssprove_valid ; auto with loc_db.
   Qed.
 
+  (* the defintion of Exec_i_realised_code is requivalent to Exec_i_realised *)
   Lemma code_pkg_equiv m i j (vote : 'bool):
     ⊢
     ⦃ λ '(h₀, h₁), h₀ = h₁ ⦄
@@ -1305,6 +1342,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       ssprove_sync_eq=>?. *)
     Admitted.
 
+  (* the non-interactive version of the real DDH package in this implementation *)
   #[tactic=notac] Equations? Aux_realised (b : bool) (i j : pid) m f' :
     package (DDH.DDH_locs :|: P_i_locs i :|: combined_locations) Game_import [interface #val #[ Exec i ] : 'bool → 'public] :=
     Aux_realised b i j m f' := {package Aux b i j m f' ∘ (par DDH.DDH_real (Sigma1.Sigma.Fiat_Shamir ∘ RO1.RO)) }.
@@ -1325,6 +1363,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       apply fsubsetUr.
   Qed.
 
+  (* the non-interactive version of the ideal DDH package in this implementation *)
   #[tactic=notac] Equations? Aux_ideal_realised (b : bool) (i j : pid) m f' :
     package (DDH.DDH_locs :|: P_i_locs i :|: combined_locations) Game_import [interface #val #[ Exec i ] : 'bool → 'public] :=
     Aux_ideal_realised b i j m f' := {package Aux b i j m f' ∘ (par DDH.DDH_ideal (Sigma1.Sigma.Fiat_Shamir ∘ RO1.RO)) }.
@@ -1359,6 +1398,9 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     eapply r_swap_scheme_cmd ; ssprove_valid
     : ssprove_swap.
 
+  (* for two different participants i,j there exists a bijective function such that
+  the output of the protocol run by the scheduler is perfectly indistinguishable from 
+  the output of the real DDH protocol *)
   Lemma P_i_aux_equiv (i j : pid) m:
     fdisjoint Sigma1.MyAlg.Sigma_locs DDH.DDH_locs →
     i != j →
@@ -1396,11 +1438,11 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     rewrite !eq_refl.
     ssprove_code_simpl.
     repeat simplify_linking.
-    simpl.
+    ssprove_sync => x_i.
     rewrite !cast_fun_K.
     ssprove_code_simpl.
     ssprove_code_simpl_more.
-    ssprove_sync => x_i.
+    
     ssprove_swap_seq_rhs [:: 4 ; 5 ; 6 ; 7]%N.
     ssprove_swap_seq_rhs [:: 2 ; 3 ; 4 ; 5 ; 6]%N.
     ssprove_swap_seq_rhs [:: 0 ; 1 ; 2 ; 3 ; 4 ; 5]%N.
@@ -1431,7 +1473,10 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
         by apply /fset1P.
       - apply preserve_update_mem_nil.
     }
-    (* ssprove_sync.
+    ssprove_sync.
+    ssprove_swap_seq_lhs [:: 0]%N.
+    ssprove_swap_seq_rhs [:: 2 ; 1 ; 0]%N. 
+    ssprove_sync => queries.
     destruct (queries (Sigma1.Sigma.prod_assoc (fto (g ^+ x_i), fto (g ^+ otf r_i)))) eqn:e.
     all: rewrite e; simpl.
     all: ssprove_code_simpl_more.
@@ -1477,6 +1522,8 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       ssprove_restore_pre.
       1: ssprove_invariant.
       clear e queries.
+      ssprove_sync.
+      ssprove_swap_seq_lhs [:: 0]%N.
       ssprove_sync=>queries.
       destruct (queries (Sigma1.Sigma.prod_assoc (fto (g ^+ x), fto (g ^+ otf r_j)))) eqn:e.
       all: rewrite e.
@@ -1626,6 +1673,8 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       ssprove_restore_pre.
       1: ssprove_invariant.
       clear e queries.
+      ssprove_sync.
+      ssprove_swap_seq_lhs [:: 0]%N.
       ssprove_sync=>queries.
       destruct (queries (Sigma1.Sigma.prod_assoc (fto (g ^+ x), fto (g ^+ otf r_j)))) eqn:e.
       all: rewrite e.
@@ -1729,8 +1778,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
         rewrite -expgM.
         rewrite mulnC.
         case b; apply r_ret ; done.
-  Qed. *)
-  Admitted.
+  Qed. 
 
   Lemma Hord (x : secret): (nat_of_ord x) = (nat_of_ord (otf x)).
   Proof.
@@ -1801,7 +1849,6 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
          destruct c as [c Hc].
          move: Hc.
          simpl.
-         unfold DDH.i_space, DDHParams.Space, Secret.
          rewrite card_ord.
          rewrite Zp_cast.
          2: apply (prime_gt1 prime_order).
@@ -1834,7 +1881,6 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
        1: apply eq_refl.
        destruct c as [h Hc].
        move: Hc.
-       unfold DDH.i_space, DDHParams.Space, Secret.
        simpl.
        rewrite card_ord.
        rewrite Zp_cast.
@@ -1842,6 +1888,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
        done.
   Qed.
 
+  (* the protocol hides the vote with non-negligible advantange. This is lemma 3.2 in the paper *)
   Lemma vote_hiding (i j : pid) m:
     i != j →
     ∀ LA A ϵ_DDH,
@@ -1870,8 +1917,8 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     clear ineq.
     repeat eapply ler_add.
     {
-      apply eq_ler.
       specialize (Hf true LA A Va).
+      apply eq_ler.
       apply Hf.
       - rewrite fdisjointUr.
         apply /andP ; split ; assumption.
@@ -1882,7 +1929,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
         apply /andP ; split ; assumption.
     }
     {
-      (* unfold Aux_realised.
+      unfold Aux_realised.
       rewrite -Advantage_link.
       rewrite par_commut.
       have -> : (par DDH.DDH_ideal (Sigma1.Sigma.Fiat_Shamir ∘ RO1.RO)) =
@@ -1893,9 +1940,6 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       3: apply DDH.DDH_ideal.
       2: {
         ssprove_valid.
-        - eapply valid_package_inject_export.
-          2: apply RO1.RO.
-          fsubset_auto.
         - eapply fsubsetUr.
         - apply fsubsetUl.
       }
@@ -1926,11 +1970,10 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
         simpl.
         rewrite !in_fset1 !eq_refl.
         rewrite filterm0.
-        done. *)
-        admit.
+        done.
     }
     2:{
-      (* unfold Aux_realised.
+      unfold Aux_realised.
       rewrite -Advantage_link.
       rewrite par_commut.
       have -> : (par DDH.DDH_real (Sigma1.Sigma.Fiat_Shamir ∘ RO1.RO)) =
@@ -1940,13 +1983,9 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       3: apply DDH.DDH_ideal.
       3: apply DDH.DDH_real.
       2: {
-        (* ssprove_valid.
-        - eapply valid_package_inject_export.
-          2: apply RO1.RO.
-          fsubset_auto.
+        ssprove_valid.
         - eapply fsubsetUr.
-        - apply fsubsetUl. *)
-        admit.
+        - apply fsubsetUl.
       }
       1: apply Dadv.
       - ssprove_valid.
@@ -1977,8 +2016,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
         simpl.
         rewrite !in_fset1 !eq_refl.
         rewrite filterm0.
-        done. *)
-        admit.
+        done.
     }
     2: {
       apply eq_ler.
@@ -2123,7 +2161,8 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       apply /orP ; right.
       by apply /fset1P.
     }
-    (* ssprove_sync=>queries.
+    ssprove_sync.
+    ssprove_sync=>queries.
     case (queries (Sigma1.Sigma.prod_assoc (fto (g ^+ x_i), fto (g ^+ otf r_i)))) eqn:e.
     all: rewrite e.
     all: ssprove_code_simpl ; simpl.
@@ -2141,6 +2180,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       clear e queries.
       ssprove_restore_pre.
       1: ssprove_invariant.
+      ssprove_sync.
       ssprove_sync=>queries.
       case (queries (Sigma1.Sigma.prod_assoc (fto (g ^+ finv f' x_j), fto (g ^+ otf e_j)))) eqn:e.
       all: rewrite e.
@@ -2201,6 +2241,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       apply r_put_rhs.
       ssprove_restore_pre.
       1: ssprove_invariant.
+      ssprove_sync.
       ssprove_sync=>queries'.
       case (queries' (Sigma1.Sigma.prod_assoc (fto (g ^+ finv f' x_j), fto (g ^+ otf r_j)))) eqn:e'.
       all: rewrite e'.
@@ -2246,8 +2287,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
         2: assumption.
         unfold f_v.
         apply vote_hiding_bij.
-  Qed. *)
-  Admitted.
+  Qed. 
 
 End OVN.
 End OVN.
