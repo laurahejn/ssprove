@@ -66,7 +66,7 @@ Qed.
 
 (* order of g *)
 Search Zp_trunc.
-Definition q' := Zp_trunc (pdiv #[g]). (* finds prime divisor in order of g and subtracts 2 *)
+Definition q' := Zp_trunc (pdiv #[g]). (* finds prime divisor in order of g (since order of g is prime this is just the order itself) and subtracts 2 *)
 Definition q : nat := q'.+2.
 
 (* q is defined to be the order of g *)
@@ -85,29 +85,32 @@ Proof.
   reflexivity.
 Qed.
 
+(* g is generator in finite set *)
+Lemma expg_g : forall x, exists ix, x = g ^+ ix.
+Proof.
+  intros.
+  apply /cycleP.
+  rewrite -g_gen.
+    apply: in_setT.
+Qed.
+
 (* the finite group (the base for ζ) is commutative under multiplication *)
 Lemma group_prodC :
   @commutative gT gT mulg.
 Proof.
   move => x y.
-  have Hx: exists ix, x = g^+ix.
-  { apply /cycleP. rewrite -g_gen.
-    apply: in_setT. }
-  have Hy: exists iy, y = g^+iy.
-  { apply /cycleP. rewrite -g_gen.
-    apply: in_setT. }
-  destruct Hx as [ix Hx].
-  destruct Hy as [iy Hy].
-  subst.
-  repeat rewrite -expgD addnC. reflexivity.
+  destruct (expg_g x) as [ix ->].
+  destruct (expg_g y) as [iy ->].
+  repeat rewrite -expgD addnC. 
+  reflexivity.
 Qed.
 
-Definition Pid : finType := [finType of 'I_n]. (* set of participants id *)
+Definition Pid : finType := [finType of 'I_n]. (* set of possible participants id *)
 Definition Secret : finType := Zp_finComRingType (Zp_trunc #[g]). (* set of possible secrets *)
 Definition Public : finType := FinGroup.arg_finType gT. (* set of possible public information *)
 Definition s0 : Secret := 0.
 
-(* make sure the sets above are non-empty *)
+(* the above sets are non-empty *)
 Definition Pid_pos : Positive #|Pid|.
 Proof.
   rewrite card_ord.
@@ -156,13 +159,14 @@ Module Type CDSParams <: SigmaProtocolParams.
     all: apply Public_pos.
   Qed.
 
-  (* definition of the relation in round 1 of OVN protocol, i.e. the ballot is valid *)
+  (* definition of the relation in round 2 of OVN protocol, i.e. the ballot holds a valid encryption
+  of 0 or 1 *)
   Definition R : Statement -> Witness -> bool :=
     λ (h : Statement) (x : Witness),
       let '(gx, gy, gyxv) := h in
       (gy^+x * g^+0 == gyxv) || (gy^+x * g^+1 == gyxv).
 
-  (* a vote v=0 lies in the relation given we use correct secret and public information *)
+  (* a vote v=0 lies in the relation given correct secret and public information *)
   Lemma relation_valid_left:
     ∀ (x : Secret) (gy : Public),
       R (g^+x, gy, gy^+x * g^+ 0) x.
@@ -173,7 +177,7 @@ Module Type CDSParams <: SigmaProtocolParams.
     done.
   Qed.
 
-  (* a vote v=1 lies in the relation given we use correct secret and public information *)
+  (* a vote v=1 lies in the relation given correct secret and public information *)
   Lemma relation_valid_right:
     ∀ (x : Secret) (gy : Public),
       R (g^+x, gy, gy^+x * g^+ 1) x.
@@ -184,7 +188,7 @@ Module Type CDSParams <: SigmaProtocolParams.
     done.
   Qed.
 
-  (* the parameters for the ZKP in round 1 of OVN *)
+  (* the parameters for the ZKP in round 2 of OVN *)
   Parameter Message Challenge Response State : finType.
   Parameter w0 : Witness.
   Parameter e0 : Challenge.
@@ -199,16 +203,16 @@ End CDSParams.
 
 Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
 
-  Module Sigma1 := Schnorr GP.
-  Module Sigma2 := SigmaProtocol π2 Alg2.
+  Module Sigma1 := Schnorr GP. (* the Schnorr ZKP used in the first round *)
+  Module Sigma2 := SigmaProtocol π2 Alg2. (* the CDS ZKP used in the second round *)
 
   Obligation Tactic := idtac.
   Set Equations Transparent.
 
-  Definition skey_loc (i : nat) : Location := (secret; (100+i)%N). (* location for the secret keys*)
-  Definition ckey_loc (i : nat) : Location := (public; (101+i)%N). (* location for the reconstruction key *)
+  Definition skey_loc (i : nat) : Location := (secret; (100+i)%N). (* locations for the secret keys *)
+  Definition ckey_loc (i : nat) : Location := (public; (101+i)%N). (* locations for the reconstruction key *)
 
-  Definition P_i_locs (i : nat) : {fset Location} := fset [:: skey_loc i ; ckey_loc i]. (* location for participant i keys *)
+  Definition P_i_locs (i : nat) : {fset Location} := fset [:: skey_loc i ; ckey_loc i]. (* location for participant i's keys *)
 
   Notation choiceStatement1 := Sigma1.MyAlg.choiceStatement.
   Notation choiceWitness1 := Sigma1.MyAlg.choiceWitness.
@@ -235,6 +239,19 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
   Definition P (i : nat) : nat := 14 + i.
   Definition Exec (i : nat) : nat := 15 + i.
 
+  (*  *)
+  Lemma not_in_domm {T S} : 
+    forall i m, i \notin @domm T S m :\ i.
+  Proof.
+    intros.
+    apply /negPn.
+    rewrite in_fsetD.
+    move=> /andP [H _].
+    move: H => /negPn H.
+    apply H.
+    by rewrite in_fset1.
+  Qed.
+
   (* if l is not an element in L0 nor in L1 then it is not in the union *)
   Lemma not_in_fsetU :
     ∀ (l : Location) L0 L1,
@@ -258,19 +275,6 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     | Some (v, _) => otf v
     | _ => 1
     end.
-
-  Lemma helper
-        (i : pid)
-        (v : chProd public choiceTranscript1)
-        (m : chMap pid (chProd public choiceTranscript1)):
-    setm m i v = setm (remm m i) i v.
-  Proof.
-    simpl.
-    apply eq_fmap.
-    intro k.
-    rewrite !setmE remmE.
-    case (eq_op) ; done.
-  Qed.
 
   Canonical finGroup_com_law := Monoid.ComLaw group_prodC.
 
@@ -312,98 +316,50 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     intro ij_neq.
     unfold compute_key, compute_key'.
     simpl.
-    case (j < i)%ord eqn:e.
-    - rewrite e helper domm_set domm_rem.
-      set X := domm _.
-      rewrite !big_fsetU1.
-      2: {
-        subst X.
-        apply /negPn.
-        rewrite in_fsetD => H.
-        move: H => /andP H.
-        destruct H as [H _].
-        move: H => /negPn H.
-        apply H.
-        by rewrite in_fset1.
-      }
-      2: {
-        subst X.
-        apply /negPn.
-        rewrite in_fsetD => H.
-        move: H => /andP H.
-        destruct H as [H _].
-        move: H => /negPn H.
-        apply H.
-        by rewrite in_fset1.
-      }
-      rewrite -helper e.
-      rewrite -2!mulgA.
-      f_equal.
-      1: unfold get_value ; by rewrite setmE eq_refl otf_fto.
-      f_equal.
-      + rewrite big_seq_cond.
-        rewrite [RHS] big_seq_cond.
-        unfold get_value.
-        erewrite eq_bigr.
-        1: done.
-        intros k k_in.
-        move: k_in => /andP [k_in k_lt].
-        simpl.
-        rewrite setmE remmE.
-        case (k == j) eqn:eq.
-        ++ move: eq => /eqP eq.
-           rewrite eq in_fsetD1 in k_in.
-           move: k_in => /andP [contra].
-           rewrite eq_refl in contra.
-           discriminate.
-        ++ by rewrite eq.
-    + rewrite Ord.ltNge Ord.leq_eqVlt in e.
-      rewrite negb_or in e.
-      move: e => /andP e.
-      destruct e as [_ e].
-      rewrite -eqbF_neg in e.
-      move: e => /eqP e.
-      rewrite e.
-      f_equal.
+    rewrite <- setm_rem.
+    rewrite domm_set domm_rem.
+    set X := domm _.
+    rewrite !big_fsetU1.
+    2-3: subst X; apply not_in_domm.
+    rewrite setm_rem.
+    have set_rem_eq : forall P x, 
+      \big[finGroup_com_law/1]_(k <- X :\ j | P k)
+        get_value (setm keys j x) k =
+      \prod_(k <- X :\ j | P k)
+        get_value (remm keys j) k.
+    { intros.
       rewrite big_seq_cond.
       rewrite [RHS] big_seq_cond.
       unfold get_value.
       erewrite eq_bigr.
       1: done.
-      intros k k_in.
-      move: k_in => /andP [k_in k_lt].
+      intros k.
+      move => /andP [k_in _].
+      simpl.
       rewrite setmE remmE.
       case (k == j) eqn:eq.
-      ++ move: eq => /eqP eq.
-          rewrite eq in_fsetD1 in k_in.
-          move: k_in => /andP [contra].
-          rewrite eq_refl in contra.
-          discriminate.
-      ++ by rewrite eq.
-    - rewrite e helper domm_set domm_rem.
-      set X := domm _.
-      rewrite !big_fsetU1.
-      2: {
-        subst X.
-        apply /negPn.
-        rewrite in_fsetD => H.
-        move: H => /andP H.
-        destruct H as [H _].
-        move: H => /negPn H.
-        apply H.
-        by rewrite in_fset1.
-      }
-      2: {
-        subst X.
-        apply /negPn.
-        rewrite in_fsetD => H.
-        move: H => /andP H.
-        destruct H as [H _].
-        move: H => /negPn H.
-        apply H.
-        by rewrite in_fset1.
-      }
-      rewrite -helper e.
+      - move: eq => /eqP eq.
+        rewrite eq in_fsetD1 in k_in.
+        move: k_in => /andP [contra].
+        rewrite eq_refl in contra.
+        discriminate.
+      - reflexivity.
+    }
+    case (j < i)%ord eqn:e.
+    - rewrite !e.
+      rewrite -2!mulgA.
+      f_equal.
+      1: unfold get_value; by rewrite setmE eq_refl otf_fto.
+      f_equal.
+      + apply set_rem_eq.
+      + rewrite Ord.ltNge Ord.leq_eqVlt in e.
+        rewrite negb_or in e.
+        move: e => /andP [_ e].
+        apply negbTE in e.
+        rewrite e.
+        f_equal.
+        apply set_rem_eq.
+    - rewrite e. 
       rewrite Ord.ltNge in e.
       apply negbT in e.
       apply negbNE in e.
@@ -412,42 +368,12 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       1: by rewrite contra in ij_neq.
       rewrite e !invMg.
       f_equal.
-      {
-        rewrite big_seq_cond.
-        rewrite [RHS] big_seq_cond.
-        erewrite eq_bigr.
-        1: done.
-        intros k H.
-        unfold get_value.
-        rewrite remmE setmE.
-        case (k == j) eqn:eq_k.
-        + move: H => /andP [H _].
-          rewrite in_fsetD1 in H.
-          move: eq_k => /eqP eq_k.
-          move: H => /andP [H _].
-          rewrite eq_k in H.
-          by rewrite eq_refl in H.
-        + by rewrite eq_k.
-      }
+      { apply set_rem_eq. }
       rewrite group_prodC.
       f_equal.
       { unfold get_value. by rewrite setmE eq_refl otf_fto. }
       f_equal.
-      rewrite big_seq_cond.
-      rewrite [RHS] big_seq_cond.
-      unfold get_value.
-      erewrite eq_bigr.
-      1: done.
-      intros k k_in.
-      move: k_in => /andP [k_in k_lt].
-      rewrite setmE remmE.
-      case (k == j) eqn:eq.
-      ++ move: eq => /eqP eq.
-          rewrite eq in_fsetD1 in k_in.
-          move: k_in => /andP [contra].
-          rewrite eq_refl in contra.
-          discriminate.
-      ++ by rewrite eq.
+      apply set_rem_eq.
   Qed.
 
   (* The reconstruction key is a bijection of the secret x (j's secret) on the form ax+b *)
@@ -459,18 +385,37 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       (∀ (x : Secret) zk,
         compute_key (setm m j (fto (g ^+ x), zk)) i = g ^+ ((a * x + b) %% q)).
   Proof.
-    simpl.
     intros m i j ne.
+    simpl.
     pose low := \prod_(k <- domm m :\ j| (k < i)%ord) get_value m k.
     pose hi := \prod_(k <- domm m :\ j| (i < k)%ord) get_value m k.
-    have Hlow : exists ilow, low = g ^+ ilow.
-    { apply /cycleP. rewrite -g_gen.
-      apply: in_setT. }
-    have Hhi : exists ihi, hi = g ^+ ihi.
-    { apply /cycleP. rewrite -g_gen.
-      apply: in_setT. }
+    have Hlow : exists ilow, low = g ^+ ilow by apply expg_g.
+    have Hhi : exists ihi, hi = g ^+ ihi by apply expg_g.
     destruct Hlow as [ilow Hlow].
     destruct Hhi as [ihi Hhi].
+    have getv_remm_eq : forall P j m,
+      \prod_(k <- domm m :\ j | P k) get_value (remm m j) k = 
+      \prod_(k <- domm m :\ j | P k) get_value m k.
+    {
+      clear low hi ilow ihi Hlow Hhi ne i j m.
+      intros.
+      rewrite big_seq_cond.
+      rewrite [RHS] big_seq_cond.
+      erewrite eq_bigr.
+      1: done.
+      intros k.
+      move => /andP [k_in _].
+      simpl.
+      unfold get_value.
+      rewrite remmE.
+      case (k == j) eqn:eq.
+      ++ move: eq => /eqP eq.
+         rewrite eq in_fsetD1 in k_in.
+         move: k_in => /andP [contra].
+         rewrite eq_refl in contra.
+         discriminate.
+      ++ reflexivity.
+    }
     case (j < i)%ord eqn:ij_rel.
     - exists 1%N.
       exists (ilow + (ihi * #[g ^+ ihi].-1))%N.
@@ -485,46 +430,8 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       rewrite domm_rem.
       set low' := \prod_(k0 <- _ | _) _.
       set hi' := \prod_(k0 <- _ | _) _.
-      have -> : low' = low.
-      {
-        unfold low, low'.
-        rewrite big_seq_cond.
-        rewrite [RHS] big_seq_cond.
-        erewrite eq_bigr.
-        1: done.
-        intros k k_in.
-        move: k_in => /andP [k_in k_lt].
-        simpl.
-        unfold get_value.
-        rewrite remmE.
-        case (k == j) eqn:eq.
-        ++ move: eq => /eqP eq.
-            rewrite eq in_fsetD1 in k_in.
-            move: k_in => /andP [contra].
-            rewrite eq_refl in contra.
-            discriminate.
-        ++ by rewrite eq.
-      }
-      have -> : hi' = hi.
-      {
-        unfold hi, hi'.
-        rewrite big_seq_cond.
-        rewrite [RHS] big_seq_cond.
-        erewrite eq_bigr.
-        1: done.
-        intros k k_in.
-        move: k_in => /andP [k_in k_lt].
-        simpl.
-        unfold get_value.
-        rewrite remmE.
-        case (k == j) eqn:eq.
-        ++ move: eq => /eqP eq.
-            rewrite eq in_fsetD1 in k_in.
-            move: k_in => /andP [contra].
-            rewrite eq_refl in contra.
-            discriminate.
-        ++ by rewrite eq.
-      }
+      have -> : low' = low by apply getv_remm_eq.
+      have -> : hi' = hi by apply getv_remm_eq.
       clear low' hi'.
       rewrite Hhi Hlow.
       rewrite invg_expg.
@@ -570,46 +477,8 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       rewrite domm_rem.
       set low' := \prod_(k0 <- _ | _) _.
       set hi' := \prod_(k0 <- _ | _) _.
-      have -> : low' = low.
-      {
-        unfold low, low'.
-        rewrite big_seq_cond.
-        rewrite [RHS] big_seq_cond.
-        erewrite eq_bigr.
-        1: done.
-        intros k k_in.
-        move: k_in => /andP [k_in k_lt].
-        simpl.
-        unfold get_value.
-        rewrite remmE.
-        case (k == j) eqn:eq.
-        ++ move: eq => /eqP eq.
-            rewrite eq in_fsetD1 in k_in.
-            move: k_in => /andP [contra].
-            rewrite eq_refl in contra.
-            discriminate.
-        ++ by rewrite eq.
-      }
-      have -> : hi' = hi.
-      {
-        unfold hi, hi'.
-        rewrite big_seq_cond.
-        rewrite [RHS] big_seq_cond.
-        erewrite eq_bigr.
-        1: done.
-        intros k k_in.
-        move: k_in => /andP [k_in k_lt].
-        simpl.
-        unfold get_value.
-        rewrite remmE.
-        case (k == j) eqn:eq.
-        ++ move: eq => /eqP eq.
-            rewrite eq in_fsetD1 in k_in.
-            move: k_in => /andP [contra].
-            rewrite eq_refl in contra.
-            discriminate.
-        ++ by rewrite eq.
-      }
+      have -> : low' = low by apply getv_remm_eq.
+      have -> : hi' = hi by apply getv_remm_eq.
       clear low' hi'.
       rewrite Hhi Hlow.
       rewrite invMg.
@@ -642,8 +511,9 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     simpl.
     case (i \in domm m) eqn:i_in.
     all: simpl in i_in.
-    - have -> : domm (setm m i v) = domm m.
+    - have -> : forall v, domm (setm m i v) = domm m.
       {
+        intros.
         simpl.
         rewrite domm_set.
         rewrite -eq_fset.
@@ -691,7 +561,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
       }
       simpl.
       f_equal.
-      + rewrite helper domm_set domm_rem.
+      + rewrite -setm_rem domm_set domm_rem.
         rewrite big_fsetU1.
         all: simpl.
         2: by rewrite in_fsetD1 eq_refl.
@@ -706,7 +576,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
         move: k_lt => /negbTE ->.
         done.
       + f_equal.
-        rewrite helper domm_set domm_rem.
+        rewrite -setm_rem domm_set domm_rem.
         rewrite big_fsetU1.
         all: simpl.
         2: by rewrite in_fsetD1 eq_refl.
@@ -859,7 +729,6 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
         bijective f /\
           (∀ zk, compute_key (setm m j (fto (g ^+ otf x), zk)) i = g ^+ (otf (f x))).
   Proof.
-    simpl.
     intros ne.
     have [f H] := test_bij i j m ne.
     simpl in H.
@@ -867,19 +736,12 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     intro x.
     destruct (H (otf x)) as [f_bij H'] ; clear H.
     split.
-    - exists (fun z => fto ((finv f) (otf z))).
-      + apply bij_inj in f_bij.
-        intro z.
-        rewrite otf_fto.
-        apply finv_f in f_bij.
-        rewrite f_bij fto_otf.
-        reflexivity.
-      + apply bij_inj in f_bij.
-        intro z.
-        simpl.
-        rewrite otf_fto.
-        apply f_finv in f_bij.
-        rewrite f_bij fto_otf.
+    - exists (fun z => fto ((finv f) (otf z))); 
+        apply bij_inj in f_bij;
+        intro z;
+        rewrite otf_fto;
+        [apply finv_f in f_bij | apply f_finv in f_bij];
+        rewrite f_bij fto_otf;
         reflexivity.
     - intro zk.
       specialize (H' zk).
@@ -962,7 +824,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
 
   (* the code corresponding to the scheduler in the article. The scheduler assumes that
   party i is corrupt, forces party j to act honest and ensures that all steps in the protocol
-  are perf *)
+  are performed. Notice that the ZKP are not yet non-interactive *)
   Definition Exec_i (i j : pid) (m : chMap pid (chProd public choiceTranscript1)):
     package fset0
       EXEC_i_I
@@ -1019,23 +881,11 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     ].
   Proof.
     ssprove_valid.
-    all: rewrite in_fsetU.
-    {
-      apply /orP ; left.
-      unfold DDH.DDH_E.
-      rewrite fset_cons -fset0E fsetU0.
-      by apply /fset1P.
-    }
-    {
-      apply /orP ; right.
-      rewrite fset_cons -fset0E fsetU0.
-      by apply /fset1P.
-    }
-    {
-      apply /orP ; right.
-      rewrite fset_cons -fset0E fsetU0.
-      by apply /fset1P.
-    }
+    all: rewrite in_fsetU; apply /orP. 
+    1: left; unfold DDH.DDH_E. 
+    2,3: right.
+    all: rewrite fset_cons -fset0E fsetU0. 
+    all: by apply /fset1P.
   Qed.
 
   Module RO1 := Sigma1.Sigma.Oracle.
@@ -1257,6 +1107,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     - destruct (v6 _) ; ssprove_valid ; auto with loc_db.
   Qed.
 
+  (* the code above when matches made with None in both cases *)
   #[program] Definition Exec_i_realised_code_runnable m (i j : pid) (vote : 'bool):
     code (P_i_locs i :|: combined_locations) [interface] 'public :=
     {code
@@ -1301,7 +1152,7 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     ssprove_valid ; auto with loc_db.
   Qed.
 
-  (* the defintion of Exec_i_realised_code is requivalent to Exec_i_realised *)
+  (* the defintion of Exec_i_realised_code is equivalent to Exec_i_realised *)
   Lemma code_pkg_equiv m i j (vote : 'bool):
     ⊢
     ⦃ λ '(h₀, h₁), h₀ = h₁ ⦄
@@ -1326,9 +1177,9 @@ Module OVN (π2 : CDSParams) (Alg2 : SigmaProtocolAlgorithms π2).
     simpl.
     ssprove_code_simpl.
     ssprove_code_simpl_more.
-    simpl.
+    (*simpl.*)
     ssprove_sync_eq=>x.
-    simpl.
+    (*simpl.*)
     ssprove_code_simpl_more.
     ssprove_sync_eq.
     ssprove_sync_eq=>rel1.
